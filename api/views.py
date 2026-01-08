@@ -4,12 +4,12 @@ from django.core.cache import cache
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
-
+from django.db.models import F
 from .models import Product, Order, OrderDetail
 from .serializers import ProductSerializer,OrderSerializer,CreateOrderSerializer
 
 from .tasks import process_order
-from utils.response import success_response
+from utils.response import success_response,error_response
 from http import HTTPStatus
 
 
@@ -117,7 +117,7 @@ class OrderAPIView(APIView):
             product.save(update_fields=["stock"])
 
         process_order.apply_async(args=[order.id], countdown=5)
-
+        cache.delete("orders")
         return success_response(
             data=OrderSerializer(order).data,
             message=HTTPStatus(status.HTTP_201_CREATED).phrase,
@@ -125,9 +125,41 @@ class OrderAPIView(APIView):
         )
 
     def get(self, request):
-        orders = Order.objects.all().prefetch_related("order_details__product")
-
+        data = cache.get("orders")
+        if not data:
+            orders = Order.objects.all().prefetch_related("order_details__product")
+            data = OrderSerializer(orders, many=True).data
+            cache.set("orders",data)
         return success_response(
-            data=OrderSerializer(orders, many=True).data,
+            data=data,
             message=HTTPStatus(status.HTTP_200_OK).phrase
         )
+
+class OrderDetailApiView(APIView):
+    def get(self,request,pk):
+        data = cache.get(f"order:{pk}")
+        if not data:
+            order = get_object_or_404(Order.objects.prefetch_related("order_details__product"),pk=pk)
+            data = OrderSerializer(order).data
+            cache.set(f"order:{pk}",data)
+        
+        return success_response(data=data,message=HTTPStatus(status.HTTP_200_OK).phrase)
+    
+    @transaction.atomic
+    def delete(self,request,pk):
+        try:
+            order = Order.objects.prefetch_related('order_details__product').select_for_update().get(pk=pk)
+        except Order.DoesNotExist:
+            return error_response(None,HTTPStatus(status.HTTP_404_NOT_FOUND).phrase,status.HTTP_404_NOT_FOUND)
+        
+        for item in order.order_details.all():
+            product = item.product
+            product.stock = F('stock') + item.quantity
+            product.save()
+            
+        order.delete()
+        
+        cache.delete(f"order:{pk}")
+        cache.delete("orders")
+        
+        return success_response(status=status.HTTP_204_NO_CONTENT,message=HTTPStatus(status.HTTP_204_NO_CONTENT))

@@ -162,4 +162,4 @@ class OrderDetailApiView(APIView):
         cache.delete(f"order:{pk}")
         cache.delete("orders")
         
-        return success_response(status=status.HTTP_204_NO_CONTENT,message=HTTPStatus(status.HTTP_204_NO_CONTENT))
+        return success_response(status_code=status.HTTP_204_NO_CONTENT,message=HTTPStatus(status.HTTP_204_NO_CONTENT))

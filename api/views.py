@@ -112,12 +112,15 @@ class OrderAPIView(APIView):
                 quantity=quantity,
                 price=product.price
             )
+            cache.delete(f"product:{product.id}")
 
             product.stock -= quantity
             product.save(update_fields=["stock"])
 
         process_order.apply_async(args=[order.id], countdown=5)
+        cache.delete("products")
         cache.delete("orders")
+        
         return success_response(
             data=OrderSerializer(order).data,
             message=HTTPStatus(status.HTTP_201_CREATED).phrase,
@@ -156,10 +159,12 @@ class OrderDetailApiView(APIView):
             product = item.product
             product.stock = F('stock') + item.quantity
             product.save()
+            cache.delete(f"product:{product.id}")
             
         order.delete()
         
         cache.delete(f"order:{pk}")
         cache.delete("orders")
+        cache.delete("products")
         
         return success_response(status_code=status.HTTP_204_NO_CONTENT,message=HTTPStatus(status.HTTP_204_NO_CONTENT))
